@@ -142,6 +142,11 @@ def generate_base64_graphs(monthly_expense, future_months, future_predictions, d
     plt.close()
 
     return graphs
+    
+  
+@app.get("/")
+def root():
+    return {"message": "API is running 🚀"}
 
 @app.post("/analyze")
 def analyze(request: AnalyzeRequest):
