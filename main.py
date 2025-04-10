@@ -33,9 +33,14 @@ def analyze_budget(df, income):
     for month, expense in monthly_expense.items():
         insights += f"{month}: ₹{expense:.2f}\n"
 
+    avg_expense = monthly_expense.mean()
+    savings = income - avg_expense
+    savings_rate = (savings / income) * 100 if income else 0
+
     insights += f"\nTotal Income: ₹{income}\n"
-    insights += f"Average Monthly Expense: ₹{monthly_expense.mean():.2f}\n"
-    insights += f"Estimated Savings: ₹{income - monthly_expense.mean():.2f}\n"
+    insights += f"Average Monthly Expense: ₹{avg_expense:.2f}\n"
+    insights += f"Estimated Savings: ₹{savings:.2f}\n"
+    insights += f"Savings Rate: {savings_rate:.2f}%\n"
 
     return insights, monthly_expense
 
@@ -76,7 +81,7 @@ def savings_recommendations(df, income):
 
     return recommendations
 
-def generate_base64_graphs(monthly_expense, future_months, future_predictions, df):
+def generate_base64_graphs(monthly_expense, future_months, future_predictions, df, income):
     graphs = {}
 
     # Line Graph
@@ -121,6 +126,21 @@ def generate_base64_graphs(monthly_expense, future_months, future_predictions, d
     graphs['pie'] = base64.b64encode(buf.read()).decode('utf-8')
     plt.close()
 
+    # Spending Rate (% of Income) Chart
+    plt.figure(figsize=(10, 5))
+    spending_rate = (monthly_expense / income) * 100
+    sns.lineplot(x=monthly_expense.index.astype(str), y=spending_rate, marker='o')
+    plt.xlabel('Month')
+    plt.ylabel('% of Income Spent')
+    plt.title('Monthly Spending Rate')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    graphs['spending_rate'] = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close()
+
     return graphs
 
 @app.post("/analyze")
@@ -131,7 +151,7 @@ def analyze(request: AnalyzeRequest):
     insights, monthly_expense = analyze_budget(df, request.income)
     future_insights, future_months, future_predictions = predict_future_budget(monthly_expense)
     recommendations = savings_recommendations(df, request.income)
-    graphs = generate_base64_graphs(monthly_expense, future_months, future_predictions, df)
+    graphs = generate_base64_graphs(monthly_expense, future_months, future_predictions, df, request.income)
 
     return {
         "insights": insights,
