@@ -1,13 +1,16 @@
+from fastapi import FastAPI, Form
+from fastapi.responses import JSONResponse
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import numpy as np
 
+app = FastAPI()
+
 def read_csv(file_path):
     df = pd.read_csv(file_path, parse_dates=['date'])
     df['Month'] = df['date'].dt.to_period('M')
-    df['Category'] = df['Category'].str.strip().str.title()
     return df
 
 def analyze_budget(df, income):
@@ -31,13 +34,11 @@ def predict_future_budget(monthly_expense):
         growth_rate = monthly_expense.pct_change().mean() if len(monthly_expense) > 1 else 0.05
         last_value = monthly_expense.iloc[-1]
         future_predictions = [last_value * (1 + growth_rate) ** i for i in range(1, 4)]
-        last_month = monthly_expense.index[-1]
-        future_months = [last_month + i for i in range(1, 4)]
+        future_months = [monthly_expense.index[-1] + i for i in range(1, 4)]
     else:
         model = ExponentialSmoothing(monthly_expense, trend='add', seasonal='add', seasonal_periods=12)
         model_fit = model.fit()
-        last_month = monthly_expense.index[-1]
-        future_months = [last_month + i for i in range(1, 4)]
+        future_months = [monthly_expense.index[-1] + i for i in range(1, 4)]
         future_predictions = model_fit.forecast(3)
 
     future_insights = "\n### Future Budget Predictions ###\n"
@@ -73,7 +74,6 @@ def savings_recommendations(df, income):
     return recommendations
 
 def generate_graphs(monthly_expense, future_months, future_predictions, df):
-    # Line chart: Actual vs Predicted
     plt.figure(figsize=(10, 5))
     sns.lineplot(x=monthly_expense.index.astype(str), y=monthly_expense.values, marker='o', label='Actual')
     sns.lineplot(x=[str(m) for m in future_months], y=future_predictions, marker='o', linestyle='dashed', label='Predicted')
@@ -85,7 +85,6 @@ def generate_graphs(monthly_expense, future_months, future_predictions, df):
     plt.tight_layout()
     plt.savefig('budget_trend.png')
 
-    # Bar chart: Category frequency
     plt.figure(figsize=(10, 5))
     sns.barplot(x=df['Category'].value_counts().index, y=df['Category'].value_counts().values)
     plt.xlabel('Category')
@@ -95,7 +94,6 @@ def generate_graphs(monthly_expense, future_months, future_predictions, df):
     plt.tight_layout()
     plt.savefig('category_distribution.png')
 
-    # Pie chart: Spending by Category
     plt.figure(figsize=(8, 8))
     df.groupby('Category')['Amount'].sum().plot(kind='pie', autopct='%1.1f%%')
     plt.title('Spending by Category')
@@ -103,25 +101,28 @@ def generate_graphs(monthly_expense, future_months, future_predictions, df):
     plt.tight_layout()
     plt.savefig('spending_pie_chart.png')
 
-def main():
-    file_path = 'sample_expenses.csv'  # Use fixed path
-
+@app.post("/analyze/")
+def analyze_income(income: float = Form(...)):
     try:
-        income = float(input("Enter your monthly income in ₹: "))
-    except ValueError:
-        print("Invalid input. Please enter a numeric value for income.")
-        return
+        file_path = 'sample_expenses.csv'  # Make sure this file is present in your deployment
+        df = read_csv(file_path)
+        insights, monthly_expense = analyze_budget(df, income)
+        future_months, future_predictions, future_insights = predict_future_budget(monthly_expense)
+        recommendations = savings_recommendations(df, income)
+        generate_graphs(monthly_expense, future_months, future_predictions, df)
 
-    df = read_csv(file_path)
-    insights, monthly_expense = analyze_budget(df, income)
-    future_months, future_predictions, future_insights = predict_future_budget(monthly_expense)
-    recommendations = savings_recommendations(df, income)
-    generate_graphs(monthly_expense, future_months, future_predictions, df)
+        with open('budget_insights.txt', 'w', encoding='utf-8') as f:
+            f.write(insights + '\n' + future_insights + '\n' + recommendations)
 
-    with open('budget_insights.txt', 'w', encoding='utf-8') as f:
-        f.write(insights + '\n' + future_insights + '\n' + recommendations)
-
-    print("✅ Budget analysis complete. Check 'budget_insights.txt' and the generated graph images.")
-
-if __name__ == "__main__":
-    main()
+        return JSONResponse({
+            "status": "success",
+            "message": "Analysis complete.",
+            "files": [
+                "budget_insights.txt",
+                "budget_trend.png",
+                "category_distribution.png",
+                "spending_pie_chart.png"
+            ]
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
