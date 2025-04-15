@@ -9,7 +9,7 @@ from io import BytesIO
 
 app = FastAPI()
 
-@app.post("/analyze/")
+@app.post("/analyze")
 async def analyze_budget_data(file: UploadFile = File(...), income: float = Form(...)):
     # Save file temporarily
     temp_path = f"temp_{file.filename}"
