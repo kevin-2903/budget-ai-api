@@ -1,12 +1,22 @@
-from fastapi import FastAPI, Form
-from fastapi.responses import JSONResponse
+# Install required packages
+!pip install pandas matplotlib seaborn statsmodels
+
+# Import required libraries
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import numpy as np
+from google.colab import files
+from io import StringIO
 
-app = FastAPI()
+# Upload CSV file
+print("Please upload your CSV file:")
+uploaded = files.upload()
+
+# Read the uploaded CSV
+for filename in uploaded.keys():
+    file_path = filename
 
 def read_csv(file_path):
     df = pd.read_csv(file_path, parse_dates=['date'])
@@ -74,6 +84,7 @@ def savings_recommendations(df, income):
     return recommendations
 
 def generate_graphs(monthly_expense, future_months, future_predictions, df):
+    # Line graph of expenses
     plt.figure(figsize=(10, 5))
     sns.lineplot(x=monthly_expense.index.astype(str), y=monthly_expense.values, marker='o', label='Actual')
     sns.lineplot(x=[str(m) for m in future_months], y=future_predictions, marker='o', linestyle='dashed', label='Predicted')
@@ -84,7 +95,9 @@ def generate_graphs(monthly_expense, future_months, future_predictions, df):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.savefig('budget_trend.png')
+    files.download('budget_trend.png')
 
+    # Bar chart of category frequency
     plt.figure(figsize=(10, 5))
     sns.barplot(x=df['Category'].value_counts().index, y=df['Category'].value_counts().values)
     plt.xlabel('Category')
@@ -93,36 +106,33 @@ def generate_graphs(monthly_expense, future_months, future_predictions, df):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.savefig('category_distribution.png')
+    files.download('category_distribution.png')
 
+    # Pie chart of spending
     plt.figure(figsize=(8, 8))
     df.groupby('Category')['Amount'].sum().plot(kind='pie', autopct='%1.1f%%')
     plt.title('Spending by Category')
     plt.ylabel('')
     plt.tight_layout()
     plt.savefig('spending_pie_chart.png')
+    files.download('spending_pie_chart.png')
 
-@app.post("/analyze/")
-def analyze_income(income: float = Form(...)):
-    try:
-        file_path = 'sample_expenses.csv'  # Make sure this file is present in your deployment
-        df = read_csv(file_path)
-        insights, monthly_expense = analyze_budget(df, income)
-        future_months, future_predictions, future_insights = predict_future_budget(monthly_expense)
-        recommendations = savings_recommendations(df, income)
-        generate_graphs(monthly_expense, future_months, future_predictions, df)
+# Run Analysis
+income = float(input("Enter your monthly income in ₹: "))
+df = read_csv(file_path)
+insights, monthly_expense = analyze_budget(df, income)
+future_months, future_predictions, future_insights = predict_future_budget(monthly_expense)
+recommendations = savings_recommendations(df, income)
 
-        with open('budget_insights.txt', 'w', encoding='utf-8') as f:
-            f.write(insights + '\n' + future_insights + '\n' + recommendations)
+# Show insights
+full_insight = insights + '\n' + future_insights + '\n' + recommendations
+print(full_insight)
 
-        return JSONResponse({
-            "status": "success",
-            "message": "Analysis complete.",
-            "files": [
-                "budget_insights.txt",
-                "budget_trend.png",
-                "category_distribution.png",
-                "spending_pie_chart.png"
-            ]
-        })
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+# Save and download insights
+with open('budget_insights.txt', 'w', encoding='utf-8') as f:
+    f.write(full_insight)
+
+files.download('budget_insights.txt')
+
+# Generate and download graphs
+generate_graphs(monthly_expense, future_months, future_predictions, df)
