@@ -9,6 +9,14 @@ from io import BytesIO
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or set this to ["http://localhost:3000"] or your Vercel URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.post("/analyze")
 async def analyze_budget_data(file: UploadFile = File(...), income: float = Form(...)):
     # Save file temporarily
