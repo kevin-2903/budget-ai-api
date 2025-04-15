@@ -1,6 +1,3 @@
-# Install required packages
-!pip install pandas matplotlib seaborn statsmodels
-
 # Import required libraries
 import pandas as pd
 import matplotlib.pyplot as plt
