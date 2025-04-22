@@ -19,6 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def root():
+    return {"message": "AI Budget Analysis API is up and running!"}
+
+
 @app.post("/analyze")
 async def analyze_budget_data(request: Request):
     data = await request.json()
