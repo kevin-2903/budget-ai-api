@@ -1,126 +1,133 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
-import shutil, os, base64
+import os, base64, requests
 from io import BytesIO
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.post("/analyze")
-async def analyze_budget_data(file: UploadFile = File(...)):
-    # Save file temporarily
-    temp_path = f"temp_{file.filename}"
-    with open(temp_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+async def analyze_budget_data(data: dict = Body(...)):
+    try:
+        csv_url = data.get("csvUrl")
+        if not csv_url:
+            raise HTTPException(status_code=400, detail="Missing csvUrl in request.")
 
-    # Read and process CSV
-    df = pd.read_csv(temp_path, parse_dates=["date"])
-    os.remove(temp_path)
+        # Download the CSV
+        response = requests.get(csv_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Unable to download CSV file.")
 
-    # Ensure column casing is consistent
-    df.columns = [col.strip().capitalize() for col in df.columns]
-    
-    # Filter income and expense
-    df["Type"] = df["Type"].str.lower()
-    income_total = df[df["Type"] == "income"]["Amount"].sum()
-    df = df[df["Type"] == "expense"]  # Only analyze expenses
+        # Read CSV into DataFrame
+        df = pd.read_csv(BytesIO(response.content), parse_dates=["date"])
 
-    df["Month"] = df["Date"].dt.to_period("M")
-    monthly_expense = df.groupby("Month")["Amount"].sum()
+        # Clean columns
+        df.columns = [col.strip().capitalize() for col in df.columns]
+        df["Type"] = df["Type"].str.lower()
 
-    # Insights
-    insights = "### Monthly Expense Analysis ###\n"
-    for month, expense in monthly_expense.items():
-        insights += f"{month}: ₹{expense:.2f}\n"
-    insights += f"\nTotal Income: ₹{income_total:.2f}\n"
-    insights += f"Average Monthly Expense: ₹{monthly_expense.mean():.2f}\n"
-    insights += f"Estimated Savings: ₹{income_total - monthly_expense.mean():.2f}\n"
+        # Income calculation
+        income_total = df[df["Type"] == "income"]["Amount"].sum()
+        df = df[df["Type"] == "expense"]  # Keep only expenses
 
-    # Prediction
-    if len(monthly_expense) < 12:
-        growth_rate = monthly_expense.pct_change().mean() if len(monthly_expense) > 1 else 0.05
-        last_value = monthly_expense.iloc[-1]
-        future_predictions = [last_value * (1 + growth_rate) ** i for i in range(1, 4)]
-        future_months = [monthly_expense.index[-1] + i for i in range(1, 4)]
-    else:
-        monthly_expense.index = monthly_expense.index.to_timestamp()
-        model = ExponentialSmoothing(monthly_expense, trend='add', seasonal='add', seasonal_periods=12)
-        model_fit = model.fit()
-        future_months = [monthly_expense.index[-1] + pd.DateOffset(months=i) for i in range(1, 4)]
-        future_predictions = model_fit.forecast(3)
+        df["Month"] = df["Date"].dt.to_period("M")
+        monthly_expense = df.groupby("Month")["Amount"].sum()
 
-    # Future Insights
-    future_insights = "\n### Future Budget Predictions ###\n"
-    for month, prediction in zip(future_months, future_predictions):
-        future_insights += f"{month.strftime('%b %Y')}: ₹{prediction:.2f}\n"
+        # Insights
+        insights = "### Monthly Expense Analysis ###\n"
+        for month, expense in monthly_expense.items():
+            insights += f"{month}: ₹{expense:.2f}\n"
+        insights += f"\nTotal Income: ₹{income_total:.2f}\n"
+        insights += f"Average Monthly Expense: ₹{monthly_expense.mean():.2f}\n"
+        insights += f"Estimated Savings: ₹{income_total - monthly_expense.mean():.2f}\n"
 
-    # Recommendations
-    category_expense = df.groupby("Category")["Amount"].sum().sort_values(ascending=False)
-    top_categories = category_expense.head(3)
-    recommendations = "\n### Savings Recommendations ###\n"
-    recommendations += "1. Reduce spending in the following categories:\n"
-    for cat, amt in top_categories.items():
-        recommendations += f"   - {cat}: ₹{amt:.2f}\n"
-    total_expense = df["Amount"].sum()
-    savings_potential = income_total - total_expense
-    if savings_potential > 0:
-        recommendations += f"\n2. Surplus: ₹{savings_potential:.2f}. Consider investing.\n"
-    else:
-        recommendations += f"\n2. Deficit: ₹{-savings_potential:.2f}. Reduce discretionary expenses.\n"
-    recommendations += "\n3. Suggested strategies:\n- Budget category limits\n- Use cash\n- Explore offers\n- Automate savings\n"
+        # Prediction
+        if len(monthly_expense) < 12:
+            growth_rate = monthly_expense.pct_change().mean() if len(monthly_expense) > 1 else 0.05
+            last_value = monthly_expense.iloc[-1]
+            future_predictions = [last_value * (1 + growth_rate) ** i for i in range(1, 4)]
+            future_months = [monthly_expense.index[-1] + i for i in range(1, 4)]
+        else:
+            monthly_expense.index = monthly_expense.index.to_timestamp()
+            model = ExponentialSmoothing(monthly_expense, trend='add', seasonal='add', seasonal_periods=12)
+            model_fit = model.fit()
+            future_months = [monthly_expense.index[-1] + pd.DateOffset(months=i) for i in range(1, 4)]
+            future_predictions = model_fit.forecast(3)
 
-    # Helper: Convert plot to base64
-    def fig_to_base64():
-        buf = BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight")
-        plt.close()
-        buf.seek(0)
-        return base64.b64encode(buf.read()).decode("utf-8")
+        # Future insights
+        future_insights = "\n### Future Budget Predictions ###\n"
+        for month, prediction in zip(future_months, future_predictions):
+            future_insights += f"{month.strftime('%b %Y')}: ₹{prediction:.2f}\n"
 
-    # Line Chart
-    plt.figure(figsize=(10, 5))
-    sns.lineplot(x=monthly_expense.index.astype(str), y=monthly_expense.values, marker='o', label='Actual')
-    sns.lineplot(x=[str(m.strftime('%b %Y')) for m in future_months], y=future_predictions, marker='o', linestyle='--', label='Predicted')
-    plt.title("Monthly Expense Trend")
-    plt.xticks(rotation=45)
-    plt.grid(True)
-    plt.legend()
-    line_chart = fig_to_base64()
+        # Recommendations
+        category_expense = df.groupby("Category")["Amount"].sum().sort_values(ascending=False)
+        top_categories = category_expense.head(3)
+        recommendations = "\n### Savings Recommendations ###\n"
+        recommendations += "1. Reduce spending in the following categories:\n"
+        for cat, amt in top_categories.items():
+            recommendations += f"   - {cat}: ₹{amt:.2f}\n"
+        total_expense = df["Amount"].sum()
+        savings_potential = income_total - total_expense
+        if savings_potential > 0:
+            recommendations += f"\n2. Surplus: ₹{savings_potential:.2f}. Consider investing.\n"
+        else:
+            recommendations += f"\n2. Deficit: ₹{-savings_potential:.2f}. Reduce discretionary expenses.\n"
+        recommendations += "\n3. Suggested strategies:\n- Budget category limits\n- Use cash\n- Explore offers\n- Automate savings\n"
 
-    # Bar Chart
-    plt.figure(figsize=(10, 5))
-    sns.barplot(x=df["Category"].value_counts().index, y=df["Category"].value_counts().values)
-    plt.title("Expense Categories Distribution")
-    plt.xticks(rotation=45)
-    plt.grid(True)
-    bar_chart = fig_to_base64()
+        # Helper: Convert plot to base64
+        def fig_to_base64():
+            buf = BytesIO()
+            plt.savefig(buf, format="png", bbox_inches="tight")
+            plt.close()
+            buf.seek(0)
+            return base64.b64encode(buf.read()).decode("utf-8")
 
-    # Pie Chart
-    plt.figure(figsize=(7, 7))
-    df.groupby("Category")["Amount"].sum().plot(kind='pie', autopct='%1.1f%%')
-    plt.title("Spending by Category")
-    plt.ylabel('')
-    pie_chart = fig_to_base64()
+        # Line Chart
+        plt.figure(figsize=(10, 5))
+        sns.lineplot(x=monthly_expense.index.astype(str), y=monthly_expense.values, marker='o', label='Actual')
+        sns.lineplot(x=[str(m.strftime('%b %Y')) for m in future_months], y=future_predictions, marker='o', linestyle='--', label='Predicted')
+        plt.title("Monthly Expense Trend")
+        plt.xticks(rotation=45)
+        plt.grid(True)
+        plt.legend()
+        line_chart = fig_to_base64()
 
-    return JSONResponse(content={
-        "insights": insights,
-        "future_predictions": future_insights,
-        "recommendations": recommendations,
-        "charts": {
-            "line_chart_base64": line_chart,
-            "bar_chart_base64": bar_chart,
-            "pie_chart_base64": pie_chart
-        }
-    })
+        # Bar Chart
+        plt.figure(figsize=(10, 5))
+        sns.barplot(x=df["Category"].value_counts().index, y=df["Category"].value_counts().values)
+        plt.title("Expense Categories Distribution")
+        plt.xticks(rotation=45)
+        plt.grid(True)
+        bar_chart = fig_to_base64()
+
+        # Pie Chart
+        plt.figure(figsize=(7, 7))
+        df.groupby("Category")["Amount"].sum().plot(kind='pie', autopct='%1.1f%%')
+        plt.title("Spending by Category")
+        plt.ylabel('')
+        pie_chart = fig_to_base64()
+
+        return JSONResponse(content={
+            "insights": insights,
+            "future_predictions": future_insights,
+            "recommendations": recommendations,
+            "charts": {
+                "line_chart_base64": line_chart,
+                "bar_chart_base64": bar_chart,
+                "pie_chart_base64": pie_chart
+            }
+        })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
