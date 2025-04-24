@@ -7,3 +7,5 @@ statsmodels
 numpy
 python-multipart
 requests
+plotly
+kaleido 
