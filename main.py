@@ -124,16 +124,27 @@ async def analyze_budget_data(request: Request):
         plt.ylabel('')
         pie_chart = fig_to_base64()
 
-        return JSONResponse(content={
-            "insights": insights,
-            "future_predictions": future_insights,
-            "recommendations": recommendations,
-            "charts": {
-                "line_chart_base64": line_chart,
-                "bar_chart_base64": bar_chart,
-                "pie_chart_base64": pie_chart
-            }
+           budget_suggestions = []
+        for cat, spent in df.groupby("Category")["Amount"].sum().items():
+        # Suggested budget is 90% of current spending for savings-oriented advice
+        suggested = round(spent * 0.9, 2)
+        budget_suggestions.append({
+            "category": cat,
+            "suggestedBudget": suggested,
+            "currentSpending": round(spent, 2)
         })
+    
+        return JSONResponse(content={
+        "insights": insights,
+        "future_predictions": future_insights,
+        "recommendations": recommendations,
+        "budgetSuggestions": budget_suggestions,  # 🔥 Newly added
+        "charts": {
+            "line_chart_base64": line_chart,
+            "bar_chart_base64": bar_chart,
+            "pie_chart_base64": pie_chart
+        }
+    })
 
     except Exception as e:
         print("❌ Unexpected Error:", e)
