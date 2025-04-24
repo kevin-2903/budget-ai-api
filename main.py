@@ -2,22 +2,30 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import base64
+import plotly.express as px
+import plotly.io as pio
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from io import BytesIO
-import requests
 
 app = FastAPI()
 
+# Allow all origins (adjust in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Set default Plotly theme
+pio.templates.default = "plotly_white"
+
+def plotly_to_base64(fig):
+    img_bytes = fig.to_image(format="png", width=1000, height=500)
+    return base64.b64encode(img_bytes).decode("utf-8")
+
 
 @app.get("/")
 async def root():
@@ -34,18 +42,14 @@ async def analyze_budget_data(request: Request):
 
     try:
         df = pd.read_csv(csv_url, parse_dates=["date"])
-    except Exception as e:
-        print("❌ CSV Read Error:", e)
-        return JSONResponse(status_code=500, content={"error": f"Error reading CSV: {str(e)}"})
-
-    try:
         df.columns = [col.strip().capitalize() for col in df.columns]
         df["Type"] = df["Type"].str.lower()
         df["Category"] = df["Category"].fillna("Uncategorized")
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df.dropna(subset=["Date"], inplace=True)
 
         income_total = df[df["Type"] == "income"]["Amount"].sum()
         df = df[df["Type"] == "expense"]
-
         df["Month"] = df["Date"].dt.to_period("M")
         monthly_expense = df.groupby("Month")["Amount"].sum()
 
@@ -78,8 +82,10 @@ async def analyze_budget_data(request: Request):
         for month, prediction in zip(future_months, future_predictions):
             future_insights += f"{month.strftime('%b %Y')}: ₹{prediction:.2f}\n"
 
+        # Top Categories
         category_expense = df.groupby("Category")["Amount"].sum().sort_values(ascending=False)
         top_categories = category_expense.head(3)
+
         recommendations = "\n### Savings Recommendations ###\n"
         recommendations += "1. Reduce spending in the following categories:\n"
         for cat, amt in top_categories.items():
@@ -92,37 +98,32 @@ async def analyze_budget_data(request: Request):
             recommendations += f"\n2. Deficit: ₹{-savings_potential:.2f}. Reduce discretionary expenses.\n"
         recommendations += "\n3. Suggested strategies:\n- Budget category limits\n- Use cash\n- Explore offers\n- Automate savings\n"
 
-        def fig_to_base64():
-            buf = BytesIO()
-            plt.savefig(buf, format="png", bbox_inches="tight")
-            plt.close()
-            buf.seek(0)
-            return base64.b64encode(buf.read()).decode("utf-8")
+        # --- Modern Charts (Plotly) ---
 
-        # Line Chart
-        plt.figure(figsize=(10, 5))
-        sns.lineplot(x=monthly_expense.index.astype(str), y=monthly_expense.values, marker='o', label='Actual')
-        sns.lineplot(x=[str(m.strftime('%b %Y')) for m in future_months], y=future_predictions, marker='o', linestyle='--', label='Predicted')
-        plt.title("Monthly Expense Trend")
-        plt.xticks(rotation=45)
-        plt.grid(True)
-        plt.legend()
-        line_chart = fig_to_base64()
+        # Line Chart (Monthly Trend)
+        line_fig = px.line(
+            x=monthly_expense.index.astype(str),
+            y=monthly_expense.values,
+            labels={"x": "Month", "y": "Expenses (₹)"},
+            title="Monthly Expense Trend"
+        )
+        line_fig.add_scatter(
+            x=[m.strftime('%b %Y') for m in future_months],
+            y=future_predictions,
+            mode='lines+markers',
+            name='Predicted'
+        )
+        line_chart = plotly_to_base64(line_fig)
 
-        # Bar Chart
-        plt.figure(figsize=(10, 5))
-        sns.barplot(x=df["Category"].value_counts().index, y=df["Category"].value_counts().values)
-        plt.title("Expense Categories Distribution")
-        plt.xticks(rotation=45)
-        plt.grid(True)
-        bar_chart = fig_to_base64()
+        # Bar Chart (Category Distribution)
+        bar_data = df["Category"].value_counts().reset_index()
+        bar_fig = px.bar(bar_data, x='index', y='Category', title="Expense Categories Distribution", labels={"index": "Category", "Category": "Count"})
+        bar_chart = plotly_to_base64(bar_fig)
 
-        # Pie Chart
-        plt.figure(figsize=(7, 7))
-        df.groupby("Category")["Amount"].sum().plot(kind='pie', autopct='%1.1f%%')
-        plt.title("Spending by Category")
-        plt.ylabel('')
-        pie_chart = fig_to_base64()
+        # Pie Chart (Spending by Category)
+        pie_data = df.groupby("Category")["Amount"].sum().reset_index()
+        pie_fig = px.pie(pie_data, values="Amount", names="Category", title="Spending by Category", hole=0.4)
+        pie_chart = plotly_to_base64(pie_fig)
 
         return JSONResponse(content={
             "insights": insights,
