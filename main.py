@@ -39,6 +39,7 @@ async def analyze_budget_data(request: Request):
         return JSONResponse(status_code=500, content={"error": f"Error reading CSV: {str(e)}"})
 
     try:
+        # Preprocess data
         df.columns = [col.strip().capitalize() for col in df.columns]
         df["Type"] = df["Type"].str.lower()
         df["Category"] = df["Category"].fillna("Uncategorized")
@@ -49,6 +50,7 @@ async def analyze_budget_data(request: Request):
         df["Month"] = df["Date"].dt.to_period("M")
         monthly_expense = df.groupby("Month")["Amount"].sum()
 
+        # Generate insights
         insights = "### Monthly Expense Analysis ###\n"
         for month, expense in monthly_expense.items():
             insights += f"{month}: ₹{expense:.2f}\n"
@@ -56,7 +58,7 @@ async def analyze_budget_data(request: Request):
         insights += f"Average Monthly Expense: ₹{monthly_expense.mean():.2f}\n"
         insights += f"Estimated Savings: ₹{income_total - monthly_expense.mean():.2f}\n"
 
-        # Forecast
+        # Forecast future expenses
         try:
             if len(monthly_expense) < 12:
                 growth_rate = monthly_expense.pct_change().mean() if len(monthly_expense) > 1 else 0.05
@@ -78,6 +80,7 @@ async def analyze_budget_data(request: Request):
         for month, prediction in zip(future_months, future_predictions):
             future_insights += f"{month.strftime('%b %Y')}: ₹{prediction:.2f}\n"
 
+        # Generate recommendations
         category_expense = df.groupby("Category")["Amount"].sum().sort_values(ascending=False)
         top_categories = category_expense.head(3)
         recommendations = "\n### Savings Recommendations ###\n"
@@ -92,6 +95,7 @@ async def analyze_budget_data(request: Request):
             recommendations += f"\n2. Deficit: ₹{-savings_potential:.2f}. Reduce discretionary expenses.\n"
         recommendations += "\n3. Suggested strategies:\n- Budget category limits\n- Use cash\n- Explore offers\n- Automate savings\n"
 
+        # Helper function to convert figures to base64
         def fig_to_base64():
             buf = BytesIO()
             plt.savefig(buf, format="png", bbox_inches="tight")
@@ -124,27 +128,28 @@ async def analyze_budget_data(request: Request):
         plt.ylabel('')
         pie_chart = fig_to_base64()
 
-           budget_suggestions = []
+        # Budget suggestions
+        budget_suggestions = []
         for cat, spent in df.groupby("Category")["Amount"].sum().items():
-        # Suggested budget is 90% of current spending for savings-oriented advice
-        suggested = round(spent * 0.9, 2)
-        budget_suggestions.append({
-            "category": cat,
-            "suggestedBudget": suggested,
-            "currentSpending": round(spent, 2)
-        })
-    
+            # Suggested budget is 90% of current spending for savings-oriented advice
+            suggested = round(spent * 0.9, 2)
+            budget_suggestions.append({
+                "category": cat,
+                "suggestedBudget": suggested,
+                "currentSpending": round(spent, 2)
+            })
+
         return JSONResponse(content={
-        "insights": insights,
-        "future_predictions": future_insights,
-        "recommendations": recommendations,
-        "budgetSuggestions": budget_suggestions,  # 🔥 Newly added
-        "charts": {
-            "line_chart_base64": line_chart,
-            "bar_chart_base64": bar_chart,
-            "pie_chart_base64": pie_chart
-        }
-    })
+            "insights": insights,
+            "future_predictions": future_insights,
+            "recommendations": recommendations,
+            "budgetSuggestions": budget_suggestions,  # 🔥 Newly added
+            "charts": {
+                "line_chart_base64": line_chart,
+                "bar_chart_base64": bar_chart,
+                "pie_chart_base64": pie_chart
+            }
+        })
 
     except Exception as e:
         print("❌ Unexpected Error:", e)
