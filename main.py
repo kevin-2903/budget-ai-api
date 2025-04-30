@@ -1,14 +1,15 @@
+# main.py
+
 import base64
 import io
 import os
 import random
-import sys
 import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -30,8 +31,13 @@ app.add_middleware(
 )
 
 sns.set(style="whitegrid")
-plt.rcParams['axes.facecolor'] = '#f9f9f9'
-plt.rcParams['figure.facecolor'] = '#ffffff'
+plt.rcParams.update({
+    "axes.facecolor": "#fefefe",
+    "figure.facecolor": "#ffffff",
+    "axes.titlesize": 14,
+    "axes.labelsize": 12,
+    "font.family": "DejaVu Sans",
+})
 
 class AnalysisRequest(BaseModel):
     csvUrl: Optional[str] = None
@@ -52,11 +58,23 @@ class Projection(BaseModel):
     projected: float
     actual: Optional[float] = 0
 
+class CategoryBreakdown(BaseModel):
+    category: str
+    amount: float
+    percentage: float
+
+class BudgetCategorySuggestion(BaseModel):
+    category: str
+    currentSpending: float
+    suggestedBudget: float
+
 class AnalysisResponse(BaseModel):
     insights: List[Insight]
     recommendations: List[Recommendation]
     charts: Dict[str, str]
     savingsProjection: List[Projection]
+    categoryBreakdown: List[CategoryBreakdown]
+    budgetSuggestions: List[BudgetCategorySuggestion]
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -69,11 +87,9 @@ def generate_sample_data() -> pd.DataFrame:
     np.random.seed(42)
     end_date = datetime.now()
     start_date = end_date - timedelta(days=180)
-    dates = pd.date_range(start=start_date, end=end_date, freq='D')
-
+    dates = pd.date_range(start=start_date, end=end_date, freq="D")
     categories = ['Food', 'Transport', 'Entertainment', 'Housing', 'Utilities', 'Shopping', 'Healthcare', 'Other']
     types = ['expense'] * 100 + ['income'] * 10
-
     data = []
     for t in types:
         date = random.choice(dates)
@@ -87,7 +103,6 @@ def generate_sample_data() -> pd.DataFrame:
             'category': category,
             'description': f'{category} {t}'
         })
-
     df = pd.DataFrame(data)
     df['date'] = pd.to_datetime(df['date'])
     return df
@@ -103,7 +118,6 @@ def load_data_from_csv(csv_url: str) -> pd.DataFrame:
 def analyze_financial_data(df: pd.DataFrame) -> Dict:
     expenses = df[df['type'] == 'expense']
     income = df[df['type'] == 'income']
-
     total_expenses = expenses['amount'].sum()
     total_income = income['amount'].sum()
     net_cashflow = total_income - total_expenses
@@ -124,8 +138,8 @@ def analyze_financial_data(df: pd.DataFrame) -> Dict:
             "priority": "high"
         })
     recommendations.append({
-        "title": "Budget Allocation",
-        "description": "Apply 50/30/20 rule: 50% needs, 30% wants, 20% savings.",
+        "title": "Apply 50/30/20 Rule",
+        "description": "Allocate your income wisely: 50% needs, 30% wants, 20% savings.",
         "priority": "medium"
     })
 
@@ -133,55 +147,85 @@ def analyze_financial_data(df: pd.DataFrame) -> Dict:
     avg_monthly_expense = monthly_expenses.tail(3).mean()
     savings_projection = []
     for i in range(1, 4):
-        next_month = (datetime.now() + timedelta(days=30*i)).strftime('%B %Y')
-        predicted_saving = max(0, random.uniform(0.8, 1.2) * (total_income/12 - avg_monthly_expense))
-        savings_projection.append({"month": next_month, "projected": round(predicted_saving, 2), "actual": 0})
+        next_month = (datetime.now() + timedelta(days=30 * i)).strftime('%B %Y')
+        predicted = max(0, random.uniform(0.8, 1.2) * (total_income / 12 - avg_monthly_expense))
+        savings_projection.append({"month": next_month, "projected": round(predicted, 2), "actual": 0})
+
+    pie_data = expenses.groupby('category')['amount'].sum()
+    category_breakdown = [
+        {"category": cat, "amount": amt, "percentage": (amt / total_expenses) * 100}
+        for cat, amt in pie_data.items()
+    ]
+
+    budget_suggestions = [
+        {
+            "category": cat,
+            "currentSpending": amt,
+            "suggestedBudget": round(amt * random.uniform(0.8, 1.1), 2)
+        }
+        for cat, amt in pie_data.items()
+    ]
 
     return {
         "insights": insights,
         "recommendations": recommendations,
         "savingsProjection": savings_projection,
         "expenses": expenses,
-        "income": income
+        "income": income,
+        "categoryBreakdown": category_breakdown,
+        "budgetSuggestions": budget_suggestions
     }
 
 def create_charts(expenses: pd.DataFrame, income: pd.DataFrame) -> Dict[str, str]:
     charts = {}
-
     try:
         pie_data = expenses.groupby('category')['amount'].sum()
-        colors = sns.color_palette("pastel")
+        colors = sns.color_palette("Set2", len(pie_data))
 
+        # Pie Chart
         fig1, ax1 = plt.subplots(figsize=(6, 6))
-        ax1.pie(pie_data, labels=pie_data.index, autopct='%1.1f%%', startangle=140, colors=colors)
-        plt.title("Expense Distribution by Category")
+        wedges, texts, autotexts = ax1.pie(
+            pie_data,
+            labels=pie_data.index,
+            autopct='%1.1f%%',
+            startangle=140,
+            colors=colors,
+            wedgeprops=dict(edgecolor='white')
+        )
+        for text in texts + autotexts:
+            text.set_fontsize(10)
+        ax1.set_title("Expense Distribution", fontsize=14)
         buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
+        plt.savefig(buffer, format="png")
         plt.close()
         charts["pieChart"] = base64.b64encode(buffer.getvalue()).decode()
 
+        # Line Chart
         expenses['month'] = expenses['date'].dt.to_period('M')
         income['month'] = income['date'].dt.to_period('M')
         exp_monthly = expenses.groupby('month')['amount'].sum()
         inc_monthly = income.groupby('month')['amount'].sum()
 
-        fig2, ax2 = plt.subplots(figsize=(8, 5))
-        ax2.plot(exp_monthly.index.astype(str), exp_monthly.values, label="Expenses", marker="o")
-        ax2.plot(inc_monthly.index.astype(str), inc_monthly.values, label="Income", marker="s")
+        fig2, ax2 = plt.subplots(figsize=(8, 4))
+        ax2.plot(exp_monthly.index.astype(str), exp_monthly.values, label="Expenses", marker="o", color="red")
+        ax2.plot(inc_monthly.index.astype(str), inc_monthly.values, label="Income", marker="s", color="green")
         ax2.legend()
-        plt.title("Monthly Income vs Expenses")
+        ax2.set_title("Monthly Income vs Expenses")
+        ax2.set_ylabel("Amount (₹)")
         plt.xticks(rotation=45)
         buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
+        plt.savefig(buffer, format="png")
         plt.close()
         charts["lineChart"] = base64.b64encode(buffer.getvalue()).decode()
 
-        fig3, ax3 = plt.subplots(figsize=(8, 5))
+        # Bar Chart
+        fig3, ax3 = plt.subplots(figsize=(8, 4))
         top_categories = pie_data.sort_values(ascending=False).head(5)
-        sns.barplot(x=top_categories.values, y=top_categories.index, palette="muted", ax=ax3)
-        plt.title("Top 5 Expense Categories")
+        sns.barplot(x=top_categories.values, y=top_categories.index, palette="coolwarm", ax=ax3)
+        ax3.set_title("Top Expense Categories")
+        ax3.set_xlabel("Amount (₹)")
         buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
+        plt.savefig(buffer, format="png")
         plt.close()
         charts["barChart"] = base64.b64encode(buffer.getvalue()).decode()
 
@@ -201,6 +245,8 @@ async def analyze(request: AnalysisRequest):
         "recommendations": results["recommendations"],
         "charts": charts,
         "savingsProjection": results["savingsProjection"],
+        "categoryBreakdown": results["categoryBreakdown"],
+        "budgetSuggestions": results["budgetSuggestions"],
     }
 
 if __name__ == "__main__":
